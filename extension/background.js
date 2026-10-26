@@ -1,8 +1,9 @@
 import { defaults, validateSettings, freshLedger, advance, findSite, siteStatus, unlock, addTime, dayWindow } from './core.js';
+import { createSerialQueue, createRequestListener, isExtensionUi } from './messaging.js';
 
 let state;
-let queue = Promise.resolve();
-const serial = job => { const result = queue.then(job); queue = result.catch(console.error); return result; };
+const serial = createSerialQueue();
+const event = job => { void serial(job).catch(error => console.error('Intentional background event failed:', error)); };
 async function load() {
   if (state) return;
   const [local, session] = await Promise.all([chrome.storage.local.get(['settings', 'ledger']), chrome.storage.session.get('runtime')]);
@@ -20,9 +21,6 @@ async function schedule() {
     ...Object.values(state.runtime.sessions).map(s => s.expiresAt));
   await chrome.alarms.create('boundary', { when: Math.max(now + 100, next) });
 }
-function isUi(sender) {
-  return [chrome.runtime.getURL('options.html'), chrome.runtime.getURL('popup.html')].includes(sender.url?.split('?')[0]);
-}
 async function broadcast() {
   const tabs = await chrome.tabs.query({});
   await Promise.allSettled(tabs.filter(t => t.id && /^https?:/.test(t.url || '')).map(t => chrome.tabs.sendMessage(t.id, { type: 'REFRESH' })));
@@ -32,7 +30,7 @@ async function handle(message, sender) {
   const now = Date.now();
   advance(state, now);
   let result;
-  const ui = isUi(sender);
+  const ui = isExtensionUi(sender, chrome.runtime.id);
   if (message.type === 'DASHBOARD' && ui) {
     result = { settings: state.settings, sites: state.settings.sites.map(site => siteStatus(state, site, now)), resetAt: dayWindow(now, state.settings.resetTime).end };
   } else if (message.type === 'SAVE_SETTINGS' && ui) {
@@ -70,22 +68,19 @@ async function handle(message, sender) {
     if (tab.active && window.focused && message.visible === true && result.mode === 'open') {
       state.runtime.tracker = { domain: site.domain, tabId: tab.id, at: now };
     } else if (state.runtime.tracker?.tabId === tab.id) state.runtime.tracker = null;
-  } else throw new Error('Unknown or unauthorized request.');
+  } else throw new Error('This request is not allowed from this page. Reload Intentional and the website, then try again.');
   await save();
   if (['SAVE_SETTINGS', 'END_SESSION', 'UNLOCK', 'ADD_TIME'].includes(message.type)) void broadcast();
   return result;
 }
-chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  serial(() => handle(message, sender)).then(data => respond({ ok: true, data }), error => respond({ ok: false, error: error.message }));
-  return true;
-});
+chrome.runtime.onMessage.addListener(createRequestListener({ extensionId: chrome.runtime.id, enqueue: serial, handle }));
 async function stopTracking() { await load(); advance(state, Date.now()); state.runtime.tracker = null; await save(); }
-chrome.tabs.onActivated.addListener(() => void serial(stopTracking));
-chrome.windows.onFocusChanged.addListener(() => void serial(stopTracking));
-chrome.tabs.onRemoved.addListener(id => void serial(async () => { await load(); if (state.runtime.tracker?.tabId === id) await stopTracking(); }));
+chrome.tabs.onActivated.addListener(() => event(stopTracking));
+chrome.windows.onFocusChanged.addListener(() => event(stopTracking));
+chrome.tabs.onRemoved.addListener(id => event(async () => { await load(); if (state.runtime.tracker?.tabId === id) await stopTracking(); }));
 chrome.tabs.onUpdated.addListener((id, change) => {
-  if (change.url) void serial(async () => { await load(); if (state.runtime.tracker?.tabId === id) await stopTracking(); });
+  if (change.url) event(async () => { await load(); if (state.runtime.tracker?.tabId === id) await stopTracking(); });
 });
-chrome.alarms.onAlarm.addListener(() => void serial(async () => { await load(); advance(state, Date.now()); await save(); await schedule(); void broadcast(); }));
-chrome.runtime.onStartup.addListener(() => void serial(async () => { await load(); state.runtime = { sessions: {}, tracker: null }; await save(); await schedule(); }));
-chrome.runtime.onInstalled.addListener(() => void serial(async () => { await load(); await save(); await schedule(); void broadcast(); }));
+chrome.alarms.onAlarm.addListener(() => event(async () => { await load(); advance(state, Date.now()); await save(); await schedule(); void broadcast(); }));
+chrome.runtime.onStartup.addListener(() => event(async () => { await load(); state.runtime = { sessions: {}, tracker: null }; await save(); await schedule(); }));
+chrome.runtime.onInstalled.addListener(() => event(async () => { await load(); await save(); await schedule(); void broadcast(); }));

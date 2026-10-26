@@ -21,7 +21,7 @@ A local-only Chrome extension inspired by the idea behind one sec. Choose how lo
 
 No build is needed to run the extension.
 
-1. Download **intentional-1.1.0.zip** from [Releases](https://github.com/HaiderHB/intentional-browsing/releases/latest) and extract it into a permanent folder.
+1. Download **intentional-1.1.1.zip** from [Releases](https://github.com/HaiderHB/intentional-browsing/releases/latest) and extract it into a permanent folder.
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode** in the top-right.
 4. Click **Load unpacked** and select the extracted folder containing `manifest.json`.
@@ -82,7 +82,7 @@ The browser suite loads the actual extension in an isolated Chromium profile. It
 
 The unit suite covers domain matching and validation, overlaps, reset boundaries, daylight-saving days, concurrent unlocks, accounting, sleep gaps, partial-minute budgets, and persistence through serialization. `CHROMIUM_PATH` can select an existing compatible Chromium binary for local browser tests.
 
-`npm run package` creates `dist/intentional-1.1.0.zip` containing just the ready-to-load extension. `node scripts/icons.mjs` regenerates the original pause icons.
+`npm run package` creates `dist/intentional-1.1.1.zip` containing just the ready-to-load extension. `node scripts/icons.mjs` regenerates the original pause icons.
 
 An optional GitHub Actions workflow is included at [`docs/ci.example.yml`](docs/ci.example.yml). To enable it, add it as `.github/workflows/ci.yml` with an account or token allowed to manage workflows. It is a template, not an active repository check.
 
@@ -93,6 +93,7 @@ extension/
   manifest.json     Chrome Manifest V3
   core.js           Time accounting, limits, validation, and day boundaries
   background.js     Serialized state updates and Chrome API integration
+  messaging.js      Request filtering, sender validation, and queue recovery
   content.js        Isolated pause screen and usage widget
   options.*         Website and ritual settings
   popup.*           Today's usage summary

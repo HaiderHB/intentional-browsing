@@ -39,6 +39,13 @@ try {
   await expect(ui.locator('#status')).toContainText('Saved');
   await ui.screenshot({ path: resolve(screenshots, 'settings.png'), fullPage: true });
   report('settings persist normalized domains and custom limits');
+  await ui.goto(`chrome-extension://${id}/options.html#settings`);
+  await expect(ui.locator('#unlock-phrase')).toHaveValue('unlock now');
+  const rejectedFromUi = await ui.evaluate(() => chrome.runtime.sendMessage({ type: 'ADD_TIME' }));
+  assert.equal(rejectedFromUi.ok, false, 'Extension pages must not impersonate a website tab');
+  await expect(ui.locator('.domain')).toHaveText('youtube.com');
+  assert.equal((await request('DASHBOARD')).sites.length, 1);
+  report('settings fragments load and rejected requests do not break subsequent requests');
 
   const page = await context.newPage(); await page.goto('https://www.youtube.com/watch?v=fixture'); await page.bringToFront();
   await expect(page.locator('dialog')).toBeVisible();
