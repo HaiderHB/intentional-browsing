@@ -1,4 +1,4 @@
-import { defaults, validateSettings, freshLedger, advance, findSite, siteStatus, unlock, dayWindow } from './core.js';
+import { defaults, validateSettings, freshLedger, advance, findSite, siteStatus, unlock, addTime, dayWindow } from './core.js';
 
 let state;
 let queue = Promise.resolve();
@@ -6,7 +6,7 @@ const serial = job => { const result = queue.then(job); queue = result.catch(con
 async function load() {
   if (state) return;
   const [local, session] = await Promise.all([chrome.storage.local.get(['settings', 'ledger']), chrome.storage.session.get('runtime')]);
-  const settings = local.settings || defaults();
+  const settings = validateSettings({ ...defaults(), ...local.settings });
   state = { settings, ledger: local.ledger || freshLedger(Date.now(), settings), runtime: session.runtime || { sessions: {}, tracker: null } };
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   advance(state, Date.now());
@@ -48,13 +48,16 @@ async function handle(message, sender) {
     await chrome.runtime.openOptionsPage(); result = {};
   } else if (message.type === 'CLOSE_TAB' && sender.tab) {
     await chrome.tabs.remove(sender.tab.id); result = {};
-  } else if (sender.tab && sender.frameId === 0 && ['STATUS', 'UNLOCK', 'END_SESSION'].includes(message.type)) {
+  } else if (sender.tab && sender.frameId === 0 && ['STATUS', 'UNLOCK', 'ADD_TIME', 'END_SESSION'].includes(message.type)) {
     const tab = await chrome.tabs.get(sender.tab.id);
     const site = findSite(state.settings, sender.url);
     // Reject a stale document after navigation.
     if (site?.domain !== findSite(state.settings, tab.url)?.domain) throw new Error('The page changed. Reload to continue.');
     if (message.type === 'UNLOCK') {
       result = unlock(state, site, message.minutes, message.phrase, now);
+      await schedule();
+    } else if (message.type === 'ADD_TIME') {
+      result = addTime(state, site, now);
       await schedule();
     } else {
       if (message.type === 'END_SESSION' && site) {
@@ -69,7 +72,7 @@ async function handle(message, sender) {
     } else if (state.runtime.tracker?.tabId === tab.id) state.runtime.tracker = null;
   } else throw new Error('Unknown or unauthorized request.');
   await save();
-  if (message.type === 'SAVE_SETTINGS' || message.type === 'END_SESSION' || message.type === 'UNLOCK') void broadcast();
+  if (['SAVE_SETTINGS', 'END_SESSION', 'UNLOCK', 'ADD_TIME'].includes(message.type)) void broadcast();
   return result;
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {

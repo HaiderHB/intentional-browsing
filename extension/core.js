@@ -1,6 +1,6 @@
 export const MINUTE = 60_000;
 export const MAX_GAP = 5_000;
-export const defaults = () => ({ phrase: 'unlock now', resetTime: '03:00', sites: [] });
+export const defaults = () => ({ phrase: 'unlock now', resetTime: '03:00', addMinutes: 5, maxAddsPerDay: 3, sites: [] });
 
 export function normalizeDomain(value) {
   const text = String(value ?? '').trim();
@@ -28,6 +28,11 @@ export function validateSettings(input) {
   if (!input || typeof input.phrase !== 'string' || !input.phrase.trim() || input.phrase.length > 160)
     throw new Error('Your unlock phrase must contain 1–160 characters.');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.resetTime)) throw new Error('Choose a valid daily reset time.');
+  const addMinutes = input.addMinutes ?? 5, maxAddsPerDay = input.maxAddsPerDay ?? 3;
+  if (!Number.isInteger(addMinutes) || addMinutes < 1 || addMinutes > 1440)
+    throw new Error('Extra time must be a whole number of minutes between 1 and 1,440.');
+  if (!Number.isInteger(maxAddsPerDay) || maxAddsPerDay < 0 || maxAddsPerDay > 100)
+    throw new Error('Extra-time uses must be a whole number between 0 and 100 per day.');
   if (!Array.isArray(input.sites) || input.sites.length > 100) throw new Error('You can add up to 100 websites.');
   const sites = input.sites.map(site => {
     const domain = normalizeDomain(site.domain);
@@ -42,7 +47,7 @@ export function validateSettings(input) {
     if (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
       throw new Error(`${a} and ${b} overlap. One entry already covers its subdomains.`);
   }
-  return { phrase: input.phrase.trim(), resetTime: input.resetTime, sites };
+  return { phrase: input.phrase.trim(), resetTime: input.resetTime, addMinutes, maxAddsPerDay, sites };
 }
 
 // Calendar arithmetic, rather than adding 24h, preserves the local reset across DST.
@@ -57,9 +62,10 @@ export function dayWindow(now, resetTime) {
   return { start: start.getTime(), end: end.getTime() };
 }
 
-export function freshLedger(now, settings) { return { start: dayWindow(now, settings.resetTime).start, totals: {} }; }
+export function freshLedger(now, settings) { return { start: dayWindow(now, settings.resetTime).start, totals: {}, addsUsed: {} }; }
 
 export function advance(state, now) {
+  state.ledger.addsUsed ??= {};
   const { settings, runtime } = state;
   const window = dayWindow(now, settings.resetTime);
   const tracker = runtime.tracker;
@@ -78,7 +84,7 @@ export function advance(state, now) {
     tracker.at = now;
   }
   if (state.ledger.start !== window.start) {
-    state.ledger = { start: window.start, totals: {} };
+    state.ledger = { start: window.start, totals: {}, addsUsed: {} };
     runtime.sessions = {};
     runtime.tracker = null;
   }
@@ -96,11 +102,28 @@ export function siteStatus(state, site, now) {
   const usedMs = state.ledger.totals[site.domain] || 0;
   const remainingMs = Math.max(0, site.dailyLimitMinutes * MINUTE - usedMs);
   const expiresAt = state.runtime.sessions[site.domain]?.expiresAt || 0;
+  const resetAt = dayWindow(now, state.settings.resetTime).end;
+  const addsRemaining = Math.max(0, (state.settings.maxAddsPerDay ?? 3) - (state.ledger.addsUsed?.[site.domain] || 0));
+  const addableMs = Math.max(0, Math.min(resetAt, now + remainingMs) - expiresAt);
   return { site, usedMs, remainingMs, expiresAt, now,
-    resetAt: dayWindow(now, state.settings.resetTime).end,
+    resetAt, addsRemaining, addMinutes: state.settings.addMinutes ?? 5,
+    canAddTime: expiresAt > now && remainingMs > 0 && addsRemaining > 0 && addableMs > 0,
     phrase: state.settings.phrase,
     maxMinutes: Math.min(site.maxSessionMinutes, Math.ceil(remainingMs / MINUTE)),
     mode: remainingMs === 0 ? 'blocked' : expiresAt > now ? 'open' : 'gate' };
+}
+
+export function addTime(state, site, now) {
+  advance(state, now);
+  const status = siteStatus(state, site, now);
+  if (status.mode !== 'open') throw new Error('Unlock a session before adding time.');
+  if (status.addsRemaining === 0) throw new Error('You have used all extra-time clicks for this website today.');
+  if (!status.canAddTime) throw new Error('This session already includes your remaining daily allowance.');
+  state.runtime.sessions[site.domain].expiresAt = Math.min(
+    status.expiresAt + status.addMinutes * MINUTE, now + status.remainingMs, status.resetAt
+  );
+  state.ledger.addsUsed[site.domain] = (state.ledger.addsUsed[site.domain] || 0) + 1;
+  return siteStatus(state, site, now);
 }
 
 export function unlock(state, site, minutes, phrase, now) {

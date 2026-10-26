@@ -2,6 +2,14 @@
   if (globalThis.__intentionalLoaded) return;
   globalThis.__intentionalLoaded = true;
   let host, root, dialog, widget, current, signature = '', busy = false, timer;
+  // Shadow-DOM events are retargeted to the host. Capture them before page
+  // shortcuts (including YouTube's window/document capture handlers) see them.
+  // Do not preventDefault: text entry, spaces, range keys and Tab still work.
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    window.addEventListener(type, event => {
+      if (host?.isConnected && (dialog?.open || event.composedPath().includes(host))) event.stopImmediatePropagation();
+    }, true);
+  }
   const time = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const clock = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const css = `
@@ -15,7 +23,7 @@
     input[type=range]{display:block;width:100%;height:26px;margin:14px 0 3px;accent-color:#60734e;cursor:pointer}.range-ends{display:flex;justify-content:space-between;color:#798175;font-size:11px}.phrase{color:#465b3c;background:#e8eddf;border-radius:5px;padding:3px 7px;overflow-wrap:anywhere;font-weight:400;user-select:none}
     input[type=text]{width:100%;border:1px solid #d7dbcf;border-radius:10px;background:#fffefa;padding:15px;color:#283326;font-size:15px}input[type=text]:focus{border-color:#7b8c68;outline:3px solid #e2e8d8}
     .primary{width:100%;border:0;border-radius:10px;background:#344632;color:#fff;padding:15px 18px;font-weight:600;margin-top:20px;transition:background .15s}.primary:hover{background:#233321}.primary:disabled{background:#dce0d5;color:#7a8474;cursor:default}.leave{display:block;margin:16px auto 0;border:0;background:none;color:#6d756a;font-size:12px;padding:8px}.leave:hover{text-decoration:underline}.foot{display:flex;justify-content:space-between;gap:12px;color:#80867c;font-size:11px;max-width:100%;}.text-button{background:none;border:0;color:#687261;padding:0;font-size:11px;text-decoration:underline}.error{font-size:12px;color:#a34234;margin:10px 0 0;min-height:18px}.summary{padding:18px;border:1px solid #daddcf;border-radius:12px;margin:26px 0;color:#596750;font-size:14px}.summary strong{color:#344632}.small{font-size:12px;color:#7a8373;margin:16px 0 0}
-    .widget{position:fixed;right:18px;top:18px;width:230px;padding:14px 16px;border:1px solid #d8decc;border-radius:14px;background:rgba(248,248,240,.76);backdrop-filter:blur(12px);box-shadow:0 4px 24px #29372114;color:#293627;pointer-events:auto;font:12px/1.4 Arial,sans-serif;transition:background .2s}.widget:hover,.widget:focus-within{background:rgba(248,248,240,.98)}.widget-head{display:flex;justify-content:space-between;gap:8px;color:#6d7865;font-size:10px;text-transform:uppercase;letter-spacing:1px}.widget-time{font-size:27px;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:7px 0 0}.widget-time span{font-size:11px;letter-spacing:0;color:#6d7865}.widget-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#717b68;font-size:10px}.widget button{border:0;background:none;padding:3px 0 3px 8px;font-size:10px;color:#455b38;text-decoration:underline}.track{height:3px;border-radius:4px;background:#dfe5d8;margin-top:10px;overflow:hidden}.fill{height:100%;background:#82966b;max-width:100%}
+    .widget{position:fixed;right:18px;top:18px;width:230px;padding:14px 16px;border:1px solid #d8decc;border-radius:14px;background:#f8f8f0;opacity:.5;backdrop-filter:blur(12px);box-shadow:0 4px 24px #29372114;color:#293627;pointer-events:auto;font:12px/1.4 Arial,sans-serif}.widget-head{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#6d7865;font-size:10px;text-transform:uppercase;letter-spacing:1px}.widget-time{font-size:32px;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:5px 0 0}.widget-time span{font-size:11px;letter-spacing:0;color:#6d7865}.widget-usage{color:#69765f;font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}.widget-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#717b68;font-size:10px}.widget button{border:0;background:none;padding:3px 0 3px 8px;font-size:10px;color:#455b38;text-decoration:underline}.widget #add-time{display:flex;align-items:center;justify-content:center;border:1px solid #aabb97;border-radius:50%;width:26px;height:26px;font:22px/1 Arial,sans-serif;padding:0;text-decoration:none}.widget #add-time:hover:enabled{background:#e0e8d5}.widget button:disabled{opacity:.4;cursor:default}.widget-message{font-size:11px;color:#7d493a;margin:6px 0 0}.track{height:3px;border-radius:4px;background:#dfe5d8;margin-top:10px;overflow:hidden}.fill{height:100%;background:#82966b;max-width:100%}
     [hidden]{display:none!important}@media(max-width:600px){.shell{padding:22px}.panel{padding:40px 0}.foot{flex-wrap:wrap}.widget{right:10px;top:10px;width:208px}}
   `;
   async function request(type, extra = {}) {
@@ -51,12 +59,22 @@
     if (data.mode === 'open') {
       if (dialog.open) dialog.close(); widget.hidden = false;
       if (signature !== nextSignature) {
-        widget.innerHTML = `<div class="widget-head"><span>Intentional</span><span>Today</span></div><div class="widget-time"><b id="used"></b> <span id="limit"></span></div><div class="track"><div class="fill"></div></div><div class="widget-bottom"><span id="session"></span><button id="end">End session</button></div>`;
+        widget.innerHTML = `<div class="widget-head"><span>Session remaining</span><button id="add-time" aria-label="Add time to this session">+</button></div><div class="widget-time"><b id="session"></b></div><div class="widget-usage"><span id="used"></span> / <span id="limit"></span> today</div><div class="track"><div class="fill"></div></div><div class="widget-bottom"><span id="adds-left"></span><button id="end">End session</button></div><div class="widget-message" role="status" hidden></div>`;
         widget.querySelector('#end').onclick = async () => { try { show(await request('END_SESSION')); } catch { void refresh(); } };
+        widget.querySelector('#add-time').onclick = async () => {
+          const button = widget.querySelector('#add-time'); button.disabled = true;
+          try { show(await request('ADD_TIME')); widget.querySelector('.widget-message').hidden = true; }
+          catch (error) { const note = widget.querySelector('.widget-message'); note.textContent = error.message; note.hidden = false; void refresh(); }
+        };
       }
       widget.querySelector('#used').textContent = time(data.usedMs);
-      widget.querySelector('#limit').textContent = `/ ${data.site.dailyLimitMinutes} min`;
-      widget.querySelector('#session').textContent = `${time(data.expiresAt - data.now)} left this session`;
+      widget.querySelector('#limit').textContent = `${data.site.dailyLimitMinutes} min`;
+      widget.querySelector('#session').textContent = time(Math.min(data.expiresAt - data.now, data.remainingMs));
+      widget.querySelector('#adds-left').textContent = `${data.addsRemaining} extra-time uses left`;
+      const add = widget.querySelector('#add-time');
+      add.disabled = !data.canAddTime;
+      add.title = data.addsRemaining === 0 ? 'No extra-time uses left today' : !data.canAddTime ? 'Daily allowance already included' : `Add up to ${data.addMinutes} minutes · ${data.addsRemaining} uses left today`;
+      add.setAttribute('aria-label', add.title);
       widget.querySelector('.fill').style.width = `${data.usedMs / (data.site.dailyLimitMinutes * 60000) * 100}%`;
     } else {
       widget.hidden = true;

@@ -23,6 +23,8 @@ try {
   await browser.request('SAVE_SETTINGS', { settings: { phrase: 'unlock now', resetTime: '03:00', sites: [{ domain: 'example.com', dailyLimitMinutes: 30, maxSessionMinutes: 15 }] } });
   const page = await browser.context.newPage(); await page.goto('https://example.com/'); await page.bringToFront();
   await page.locator('#phrase').pressSequentially('unlock now'); await page.locator('button[type=submit]').click();
+  await page.locator('#add-time').click();
+  await expect(page.locator('#adds-left')).toContainText('2 extra-time');
   await expect.poll(async () => (await browser.request('DASHBOARD')).data.sites[0].usedMs).toBeGreaterThan(1000);
   before = (await browser.request('DASHBOARD')).data.sites[0].usedMs;
 } finally { await browser.context.close(); }
@@ -31,7 +33,8 @@ try {
   const { data } = await browser.request('DASHBOARD');
   assert.equal(data.sites[0].mode, 'gate');
   assert.ok(data.sites[0].usedMs >= before);
+  assert.equal(data.sites[0].addsRemaining, 2);
   const page = await browser.context.newPage(); await page.goto('https://example.com/');
   await expect(page.locator('#minutes')).toBeVisible();
-  console.log('PASS browser restart preserves recorded usage and ends the previous session');
+  console.log('PASS browser restart preserves usage and extra-time quota and ends the previous session');
 } finally { await browser.context.close(); }

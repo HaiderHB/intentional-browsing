@@ -35,6 +35,8 @@ $('#new-domain').onkeydown = event => { if (event.key === 'Enter') { event.preve
 document.querySelectorAll('[data-domain]').forEach(button => { button.onclick = () => { $('#new-domain').value = button.dataset.domain; $('#new-domain').focus(); }; });
 $('#unlock-phrase').oninput = () => { draft.phrase = $('#unlock-phrase').value; notice('Unsaved changes'); };
 $('#reset-time').oninput = () => { draft.resetTime = $('#reset-time').value; notice('Unsaved changes'); };
+$('#add-minutes').oninput = () => { draft.addMinutes = Number($('#add-minutes').value); notice('Unsaved changes'); };
+$('#max-adds').oninput = () => { draft.maxAddsPerDay = Number($('#max-adds').value); notice('Unsaved changes'); };
 $('#settings-form').onsubmit = async event => {
   event.preventDefault();
   try {
@@ -46,5 +48,5 @@ $('#settings-form').onsubmit = async event => {
   } catch (error) { notice(error.message, true); }
   finally { $('#save').disabled = false; }
 };
-try { snapshot = await send('DASHBOARD'); draft = structuredClone(snapshot.settings); $('#unlock-phrase').value = draft.phrase; $('#reset-time').value = draft.resetTime; renderSites(); }
+try { snapshot = await send('DASHBOARD'); draft = structuredClone(snapshot.settings); $('#unlock-phrase').value = draft.phrase; $('#reset-time').value = draft.resetTime; $('#add-minutes').value = draft.addMinutes; $('#max-adds').value = draft.maxAddsPerDay; renderSites(); }
 catch (error) { notice(error.message, true); $('#save').disabled = true; }

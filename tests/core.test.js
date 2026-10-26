@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaults, normalizeDomain, findSite, validateSettings, dayWindow, freshLedger, advance, unlock, siteStatus, MINUTE } from '../extension/core.js';
+import { defaults, normalizeDomain, findSite, validateSettings, dayWindow, freshLedger, advance, unlock, addTime, siteStatus, MINUTE } from '../extension/core.js';
 const base = new Date(2026, 9, 26, 12).getTime();
 function fixture(now = base) {
   const settings = { ...defaults(), sites: [{ domain: 'youtube.com', maxSessionMinutes: 15, dailyLimitMinutes: 30 }] };
@@ -97,4 +97,59 @@ test('lowering daily limit does not erase already-recorded usage', () => {
   unlock(state, site, 10, 'unlock now', base); state.ledger.totals[site.domain] = 10 * MINUTE;
   state.runtime.tracker = { domain: site.domain, tabId: 1, at: base }; site.dailyLimitMinutes = 5;
   advance(state, base + 1000); assert.equal(state.ledger.totals[site.domain], 10 * MINUTE);
+});
+
+test('existing settings and ledgers migrate with safe extra-time defaults', () => {
+  const state = fixture(), old = { ...state.settings };
+  delete old.addMinutes; delete old.maxAddsPerDay; delete state.ledger.addsUsed;
+  const migrated = validateSettings(old);
+  assert.equal(migrated.addMinutes, 5); assert.equal(migrated.maxAddsPerDay, 3);
+  advance(state, base); assert.deepEqual(state.ledger.addsUsed, {});
+  for (const addMinutes of [0, -1, 1.5, 1441]) assert.throws(() => validateSettings({ ...old, addMinutes }));
+  for (const maxAddsPerDay of [-1, 1.5, 101]) assert.throws(() => validateSettings({ ...old, maxAddsPerDay }));
+  assert.equal(validateSettings({ ...old, maxAddsPerDay: 0 }).maxAddsPerDay, 0);
+});
+test('extra time extends countdown but never changes usage or daily allowance', () => {
+  const state = fixture(), site = state.settings.sites[0];
+  unlock(state, site, 5, 'unlock now', base);
+  const result = addTime(state, site, base);
+  assert.equal(result.expiresAt, base + 10 * MINUTE);
+  assert.equal(result.usedMs, 0); assert.equal(result.remainingMs, 30 * MINUTE);
+  assert.equal(site.dailyLimitMinutes, 30); assert.equal(result.addsRemaining, 2);
+});
+test('extra-time quota is shared across sessions and persists through serialization', () => {
+  let state = fixture(); const site = state.settings.sites[0];
+  state.settings.maxAddsPerDay = 2;
+  unlock(state, site, 1, 'unlock now', base); addTime(state, site, base);
+  state = JSON.parse(JSON.stringify(state));
+  delete state.runtime.sessions[site.domain];
+  unlock(state, site, 1, 'unlock now', base + 1000); addTime(state, site, base + 1000);
+  assert.throws(() => addTime(state, site, base + 1000), /all extra-time clicks/);
+  assert.equal(siteStatus(state, site, base + 1000).addsRemaining, 0);
+});
+test('extra-time grants are clipped to remaining daily time and reset boundary', () => {
+  const state = fixture(), site = state.settings.sites[0];
+  state.ledger.totals[site.domain] = 28 * MINUTE;
+  unlock(state, site, 1, 'unlock now', base);
+  assert.equal(addTime(state, site, base).expiresAt, base + 2 * MINUTE);
+  assert.throws(() => addTime(state, site, base), /remaining daily allowance/);
+  assert.equal(state.ledger.addsUsed[site.domain], 1, 'A no-op must not consume a click');
+  const nearReset = new Date(2026, 9, 27, 2, 58).getTime(), other = fixture(nearReset);
+  unlock(other, site, 1, 'unlock now', nearReset);
+  assert.equal(addTime(other, site, nearReset).expiresAt, nearReset + 2 * MINUTE);
+});
+test('extra time cannot reopen expired or daily-blocked sessions', () => {
+  const state = fixture(), site = state.settings.sites[0];
+  assert.throws(() => addTime(state, site, base), /Unlock a session/);
+  unlock(state, site, 1, 'unlock now', base);
+  assert.throws(() => addTime(state, site, base + MINUTE), /Unlock a session/);
+  state.ledger.totals[site.domain] = 30 * MINUTE;
+  assert.throws(() => addTime(state, site, base + MINUTE), /Unlock a session/);
+});
+test('extra-time uses reset at the configured daily boundary', () => {
+  const state = fixture(), site = state.settings.sites[0];
+  unlock(state, site, 1, 'unlock now', base); addTime(state, site, base);
+  const reset = dayWindow(base, state.settings.resetTime).end;
+  advance(state, reset);
+  assert.equal(siteStatus(state, site, reset).addsRemaining, 3);
 });

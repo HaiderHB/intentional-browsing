@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Intentional — pause before you browse",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Choose your time, type your intention, and keep distracting websites within a daily limit. Everything stays on your device.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],

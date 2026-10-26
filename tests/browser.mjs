@@ -24,10 +24,15 @@ const request = (type, extra = {}) => ui.evaluate(async ({ type, extra }) => {
 }, { type, extra });
 const report = label => console.log(`PASS ${label}`);
 try {
-  await context.route('https://www.youtube.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>Fixture video site</title></head><body style="margin:0;background:#f1f2f0;font:20px Arial"><header style="padding:30px;background:white">A video website</header><main style="padding:60px"><h1>Something to watch</h1><p>This local fixture makes the test independent of the network.</p><button id="underlying">A page control</button></main></body></html>' }));
-  await context.route('https://music.youtube.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Music fixture</title><h1>Music site</h1>' }));
+  // Model player shortcuts at both capture and bubble phases. Shadow-DOM
+  // retargeting means a player cannot recognize the extension's input by tag.
+  const shortcuts = `<script>window.playerSpacePresses=0;for(const target of [window,document])for(const capture of [true,false])for(const type of ['keydown','keypress','keyup'])target.addEventListener(type,event=>{if(event.code==='Space'&&event.target.tagName!=='INPUT'){window.playerSpacePresses++;event.preventDefault();}},capture);</script>`;
+  await context.route('https://www.youtube.com/**', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><title>Fixture video site</title>${shortcuts}</head><body style="margin:0;background:#f1f2f0;font:20px Arial"><header style="padding:30px;background:white">A video website</header><main style="padding:60px"><h1>Something to watch</h1><p>This local fixture makes the test independent of the network.</p><button id="underlying">A page control</button></main></body></html>` }));
+  await context.route('https://music.youtube.com/**', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>Music fixture</title>${shortcuts}<h1>Music site</h1>` }));
   await ui.goto(`chrome-extension://${id}/options.html`);
   await expect(ui.locator('#unlock-phrase')).toHaveValue('unlock now');
+  await expect(ui.locator('#add-minutes')).toHaveValue('5');
+  await expect(ui.locator('#max-adds')).toHaveValue('3');
   await ui.locator('#new-domain').fill('https://www.youtube.com/watch?v=example');
   await ui.locator('#new-session').fill('15'); await ui.locator('#new-daily').fill('1');
   await ui.locator('#add').click(); await ui.locator('#save').click();
@@ -50,8 +55,16 @@ try {
   report('gate, exact phrase, capped slider, Escape protection, and narrow layout');
 
   await page.locator('#phrase').pressSequentially('unlock now');
+  await expect(page.locator('#phrase')).toHaveValue('unlock now');
+  assert.equal(await page.evaluate(() => window.playerSpacePresses), 0);
+  report('spaces in unlock input never reach window or document player shortcuts');
   await page.locator('button[type=submit]').click();
   await expect(page.locator('.widget')).toBeVisible(); await expect(page.locator('dialog')).not.toBeVisible();
+  await expect(page.locator('.widget')).toHaveCSS('opacity', '0.5');
+  await expect(page.locator('.widget-time #session')).toContainText(':');
+  await expect(page.locator('.widget-usage')).toContainText('/ 1 min today');
+  await page.locator('#underlying').focus(); await page.keyboard.press('Space');
+  assert.ok(await page.evaluate(() => window.playerSpacePresses > 0), 'Normal player keyboard shortcuts still work');
   await expect.poll(async () => (await request('DASHBOARD')).sites[0].usedMs, { timeout: 10000 }).toBeGreaterThan(1000);
   await page.screenshot({ path: resolve(screenshots, 'widget.png') });
   const first = (await request('DASHBOARD')).sites[0];
@@ -86,7 +99,11 @@ try {
   assert.equal((await request('DASHBOARD')).sites[0].mode, 'gate');
   report('session expiration locks the website even without navigation');
   // Charge in short increments while a real foreground heartbeat is present.
-  await music.locator('#phrase').pressSequentially('unlock now'); await music.locator('button[type=submit]').click();
+  await music.locator('#phrase').pressSequentially('unlock now');
+  await expect(music.locator('#phrase')).toHaveValue('unlock now');
+  assert.equal(await music.evaluate(() => window.playerSpacePresses), 0);
+  await music.locator('button[type=submit]').click();
+  report('spaces remain isolated when unlocking again after timer expiration');
   await expect(music.locator('.widget')).toBeVisible();
   for (let i = 0; i < 24; i++) {
     await worker.evaluate(() => { globalThis.testOffset += 2500; });
@@ -121,5 +138,29 @@ try {
   await ui.screenshot({ path: resolve(screenshots, 'settings.png'), fullPage: true });
   await page.bringToFront(); await expect(page.locator('#minutes')).toBeVisible();
   await page.screenshot({ path: resolve(screenshots, 'unlock.png') });
+  await ui.locator('#add-minutes').fill('2'); await ui.locator('#max-adds').fill('2');
+  await ui.locator('#save').click(); await expect(ui.locator('#status')).toContainText('Saved');
+  await ui.reload(); await expect(ui.locator('#add-minutes')).toHaveValue('2');
+  await expect(ui.locator('#max-adds')).toHaveValue('2');
+  await page.bringToFront(); await page.locator('#phrase').pressSequentially('unlock now');
+  await page.locator('button[type=submit]').click(); await expect(page.locator('#add-time')).toBeEnabled();
+  const beforeAdd = (await request('DASHBOARD')).sites[0];
+  await page.locator('#add-time').click();
+  await expect(page.locator('#adds-left')).toContainText('1 extra-time');
+  const afterAdd = (await request('DASHBOARD')).sites[0];
+  assert.equal(afterAdd.expiresAt - beforeAdd.expiresAt, 120000);
+  assert.equal(afterAdd.site.dailyLimitMinutes, 60);
+  assert.ok(afterAdd.usedMs - beforeAdd.usedMs < 1500, 'Adding countdown time does not charge daily usage');
+  await music.bringToFront(); await expect(music.locator('#adds-left')).toContainText('1 extra-time');
+  await music.locator('#add-time').focus(); await music.keyboard.press('Space');
+  await expect(music.locator('#add-time')).toBeDisabled();
+  await expect(page.locator('#adds-left')).toContainText('0 extra-time');
+  await page.reload(); await expect(page.locator('#add-time')).toBeDisabled();
+  const afterSecond = (await request('DASHBOARD')).sites[0];
+  assert.equal(afterSecond.expiresAt - afterAdd.expiresAt, 120000);
+  report('configurable + time changes only countdown, shares quota across tabs, survives reload, and works by keyboard');
+  await page.bringToFront();
+  await page.screenshot({ path: resolve(screenshots, 'widget.png') });
+  assert.deepEqual(errors, []);
 } finally { await context.close(); }
 await import('./persistence.mjs');
