@@ -1,30 +1,41 @@
 (() => {
   if (globalThis.__intentionalLoaded) return;
   globalThis.__intentionalLoaded = true;
-  let host, root, dialog, widget, current, signature = '', busy = false, timer;
+  let host, root, dialog, widget, warning, current, signature = '', busy = false, refreshPending = false, timer, drag;
   // Shadow-DOM events are retargeted to the host. Capture them before page
   // shortcuts (including YouTube's window/document capture handlers) see them.
   // Do not preventDefault: text entry, spaces, range keys and Tab still work.
   for (const type of ['keydown', 'keypress', 'keyup']) {
     window.addEventListener(type, event => {
-      if (host?.isConnected && (dialog?.open || event.composedPath().includes(host))) event.stopImmediatePropagation();
+      if (host?.isConnected && (dialog?.open || event.composedPath().includes(host))) {
+        if (type === 'keydown') moveWithKeyboard(event);
+        event.stopImmediatePropagation();
+      }
     }, true);
   }
   const time = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   const clock = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const css = `
-    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;font-family:Arial,sans-serif!important;color:#242d28!important;color-scheme:light!important}
+    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;font-family:Arial,sans-serif!important;color:var(--ink)!important;color-scheme:light!important;--page:#f6f4ed;--surface:#fffef9;--ink:#293329;--muted:#687068;--line:#deded1;--soft:#dce5d1;--accent:#40543a;--button:#344632;--button-hover:#233321;--button-ink:#fff;--error:#a34234}
     *{box-sizing:border-box}button,input{font:inherit}button{cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid #98ae87;outline-offset:4px}
-    dialog{position:fixed;inset:0;margin:0;padding:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;background:#f6f4ed;color:#242d28;pointer-events:auto;font:15px/1.5 Arial,sans-serif;overflow:auto}
-    dialog::backdrop{background:#f6f4ed}.shell{min-height:100dvh;display:flex;flex-direction:column;padding:32px 42px}
-    .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700;letter-spacing:-.5px}.mark{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;width:30px;height:30px;background:#dce5d1;color:#40543a;font-size:14px;letter-spacing:2px;padding-left:2px}
-    .panel{width:min(100%,470px);margin:auto;padding:40px 0}.eyebrow{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#697a61}.site{display:inline-block;background:#eae9df;border:1px solid #deded1;border-radius:100px;padding:6px 13px;font-size:12px;margin:20px 0 12px}
-    h1{font:normal clamp(37px,5vw,52px)/1.08 Georgia,serif;letter-spacing:-1.6px;margin:4px 0 16px}p{color:#687068;margin:0 0 25px}.field{margin-top:27px}label{display:block;font-size:13px;font-weight:600;margin-bottom:12px}.range-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.range-head label{margin:0}.value{font:27px Georgia,serif;white-space:nowrap}.value small{font:12px Arial,sans-serif;color:#697168}
-    input[type=range]{display:block;width:100%;height:26px;margin:14px 0 3px;accent-color:#60734e;cursor:pointer}.range-ends{display:flex;justify-content:space-between;color:#798175;font-size:11px}.phrase{color:#465b3c;background:#e8eddf;border-radius:5px;padding:3px 7px;overflow-wrap:anywhere;font-weight:400;user-select:none}
-    input[type=text]{width:100%;border:1px solid #d7dbcf;border-radius:10px;background:#fffefa;padding:15px;color:#283326;font-size:15px}input[type=text]:focus{border-color:#7b8c68;outline:3px solid #e2e8d8}
-    .primary{width:100%;border:0;border-radius:10px;background:#344632;color:#fff;padding:15px 18px;font-weight:600;margin-top:20px;transition:background .15s}.primary:hover{background:#233321}.primary:disabled{background:#dce0d5;color:#7a8474;cursor:default}.leave{display:block;margin:16px auto 0;border:0;background:none;color:#6d756a;font-size:12px;padding:8px}.leave:hover{text-decoration:underline}.foot{display:flex;justify-content:space-between;gap:12px;color:#80867c;font-size:11px;max-width:100%;}.text-button{background:none;border:0;color:#687261;padding:0;font-size:11px;text-decoration:underline}.error{font-size:12px;color:#a34234;margin:10px 0 0;min-height:18px}.summary{padding:18px;border:1px solid #daddcf;border-radius:12px;margin:26px 0;color:#596750;font-size:14px}.summary strong{color:#344632}.small{font-size:12px;color:#7a8373;margin:16px 0 0}
-    .widget{position:fixed;right:18px;top:18px;width:230px;padding:14px 16px;border:1px solid #d8decc;border-radius:14px;background:#f8f8f0;opacity:.5;backdrop-filter:blur(12px);box-shadow:0 4px 24px #29372114;color:#293627;pointer-events:auto;font:12px/1.4 Arial,sans-serif}.widget-head{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#6d7865;font-size:10px;text-transform:uppercase;letter-spacing:1px}.widget-time{font-size:32px;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:5px 0 0}.widget-time span{font-size:11px;letter-spacing:0;color:#6d7865}.widget-usage{color:#69765f;font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}.widget-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#717b68;font-size:10px}.widget button{border:0;background:none;padding:3px 0 3px 8px;font-size:10px;color:#455b38;text-decoration:underline}.widget #add-time{display:flex;align-items:center;justify-content:center;border:1px solid #aabb97;border-radius:50%;width:26px;height:26px;font:22px/1 Arial,sans-serif;padding:0;text-decoration:none}.widget #add-time:hover:enabled{background:#e0e8d5}.widget button:disabled{opacity:.4;cursor:default}.widget-message{font-size:11px;color:#7d493a;margin:6px 0 0}.track{height:3px;border-radius:4px;background:#dfe5d8;margin-top:10px;overflow:hidden}.fill{height:100%;background:#82966b;max-width:100%}
-    [hidden]{display:none!important}@media(max-width:600px){.shell{padding:22px}.panel{padding:40px 0}.foot{flex-wrap:wrap}.widget{right:10px;top:10px;width:208px}}
+    dialog{position:fixed;inset:0;margin:0;padding:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;background:var(--page);color:var(--ink);pointer-events:auto;font:15px/1.5 Arial,sans-serif;overflow:auto}
+    dialog::backdrop{background:var(--page)}.shell{min-height:100dvh;display:flex;flex-direction:column;padding:32px 42px}
+    .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700;letter-spacing:-.5px}.mark{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;width:30px;height:30px;background:var(--soft);color:var(--accent);font-size:14px;letter-spacing:2px;padding-left:2px}
+    .panel{width:min(100%,470px);margin:auto;padding:40px 0}.eyebrow{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}.site{display:inline-block;background:var(--soft);border:1px solid var(--line);border-radius:100px;padding:6px 13px;font-size:12px;margin:20px 0 12px}
+    h1{font:normal clamp(37px,5vw,52px)/1.08 Georgia,serif;letter-spacing:-1.6px;margin:4px 0 16px}p{color:var(--muted);margin:0 0 25px}.field{margin-top:27px}label{display:block;font-size:13px;font-weight:600;margin-bottom:12px}.range-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.range-head label{margin:0}.value{font:27px Georgia,serif;white-space:nowrap}.value small{font:12px Arial,sans-serif;color:var(--muted)}
+    input[type=range]{display:block;width:100%;height:26px;margin:14px 0 3px;accent-color:#60734e;cursor:pointer}.range-ends{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.phrase{color:var(--accent);background:var(--soft);border-radius:5px;padding:3px 7px;overflow-wrap:anywhere;font-weight:400;user-select:none}
+    input[type=text]{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:15px;color:var(--ink);font-size:15px}input[type=text]:focus{border-color:#7b8c68;outline:3px solid var(--soft)}
+    .primary{width:100%;border:0;border-radius:10px;background:var(--button);color:var(--button-ink);padding:15px 18px;font-weight:600;margin-top:20px;transition:background .15s}.primary:hover{background:var(--button-hover)}.primary:disabled{background:var(--soft);color:var(--accent);cursor:default}.leave{display:block;margin:16px auto 0;border:0;background:none;color:var(--muted);font-size:12px;padding:8px}.leave:hover{text-decoration:underline}.foot{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;max-width:100%;}.text-button{background:none;border:0;color:var(--muted);padding:0;font-size:11px;text-decoration:underline}.error{font-size:12px;color:var(--error);margin:10px 0 0;min-height:18px}.summary{padding:18px;border:1px solid var(--line);border-radius:12px;margin:26px 0;color:var(--muted);font-size:14px}.summary strong{color:var(--button)}.small{font-size:12px;color:var(--muted);margin:16px 0 0}
+    .widget{position:fixed;right:18px;top:18px;width:230px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);opacity:.5;backdrop-filter:blur(12px);box-shadow:0 4px 24px #29372114;color:var(--ink);pointer-events:auto;font:12px/1.4 Arial,sans-serif}.widget-head{display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}.widget-time{font-size:32px;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:5px 0 0}.widget-time span{font-size:11px;letter-spacing:0;color:var(--muted)}.widget-usage{color:var(--muted);font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}.widget-bottom{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--muted);font-size:10px}.widget button{border:0;background:none;padding:3px 0 3px 8px;font-size:10px;color:var(--accent);text-decoration:underline}.widget #add-time{display:flex;align-items:center;justify-content:center;border:1px solid #aabb97;border-radius:50%;width:26px;height:26px;font:22px/1 Arial,sans-serif;padding:0;text-decoration:none}.widget #add-time:hover:enabled{background:var(--soft)}.widget button:disabled{opacity:.4;cursor:default}.widget-message{font-size:11px;color:var(--error);margin:6px 0 0}.track{height:3px;border-radius:4px;background:var(--soft);margin-top:10px;overflow:hidden}.fill{height:100%;background:#82966b;max-width:100%}
+    .widget{--edge:18px;max-width:calc(100vw - 20px);transition:opacity .18s}.widget:hover,.widget:focus-within,.widget.dragging{opacity:1}
+    .widget[data-corner=top-left],.widget[data-corner=bottom-left]{left:var(--edge);right:auto}.widget[data-corner=bottom-left],.widget[data-corner=bottom-right]{top:auto;bottom:var(--edge)}
+    .widget #move-widget{flex:1;text-align:left;padding:4px 0;font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit;text-decoration:none;cursor:grab;touch-action:none;user-select:none}.widget.dragging #move-widget{cursor:grabbing}
+    .warning{position:fixed;top:18px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 24px);padding:13px 18px;border:2px solid #bd8d38;border-radius:12px;background:var(--surface);color:var(--ink);pointer-events:auto;box-shadow:0 4px 24px #0003;font:14px/1.5 Arial,sans-serif;animation:notice-pulse 1.6s ease-in-out 3}.warning strong{display:block}.warning button{border:0;border-radius:7px;padding:6px 10px;margin-top:6px;background:var(--button);color:var(--button-ink);font-size:12px}.warning small{display:block;color:var(--muted);font-size:12px}
+    @keyframes notice-pulse{50%{box-shadow:0 0 0 6px #bd8d3840}}@media(prefers-reduced-motion:reduce){.warning{animation:none}.widget{transition:none}}
+    [hidden]{display:none!important}@media(max-width:600px){.shell{padding:22px}.panel{padding:40px 0}.foot{flex-wrap:wrap}.widget{--edge:10px;right:10px;top:10px;width:208px}.warning{top:auto;bottom:180px}}
+
+    :host([data-theme=dark]){--page:#171c19;--surface:#222923;--ink:#e7ece2;--muted:#a9b5a2;--line:#424d3e;--soft:#34402f;--accent:#b6cba5;--button:#aec69b;--button-hover:#c3d5b5;--button-ink:#172313;--error:#efaa91;color-scheme:dark!important}
+    @media(prefers-color-scheme:dark){:host([data-theme=system]){--page:#171c19;--surface:#222923;--ink:#e7ece2;--muted:#a9b5a2;--line:#424d3e;--soft:#34402f;--accent:#b6cba5;--button:#aec69b;--button-hover:#c3d5b5;--button-ink:#172313;--error:#efaa91;color-scheme:dark!important}}
   `;
   async function request(type, extra = {}) {
     const response = await chrome.runtime.sendMessage({ type, visible: !document.hidden, ...extra });
@@ -35,11 +46,59 @@
     if (host?.isConnected) return;
     host = document.createElement('intentional-focus');
     root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = `<style>${css}</style><dialog aria-label="Intentional website pause"></dialog><aside class="widget" aria-label="Website usage today" hidden></aside>`;
+    root.innerHTML = `<style>${css}</style><dialog aria-label="Intentional website pause"></dialog><aside class="widget" aria-label="Website usage today" hidden></aside><aside class="warning" role="status" hidden><strong>Session ending soon</strong><small id="warning-seconds"></small><button id="warning-add" type="button"></button></aside>`;
     (document.documentElement || document).append(host);
-    dialog = root.querySelector('dialog'); widget = root.querySelector('aside');
+    dialog = root.querySelector('dialog'); widget = root.querySelector('.widget'); warning = root.querySelector('.warning');
     dialog.addEventListener('cancel', e => e.preventDefault());
+    warning.querySelector('button').onclick = extendSession;
     signature = '';
+  }
+  async function extendSession() {
+    widget.querySelector('#add-time').disabled = true;
+    warning.querySelector('button').disabled = true;
+    try {
+      show(await request('ADD_TIME'));
+      const note = widget.querySelector('.widget-message'); if (note) note.hidden = true;
+    } catch (error) {
+      const note = widget.querySelector('.widget-message');
+      if (note) { note.textContent = error.message; note.hidden = false; }
+      void refresh();
+    }
+  }
+  async function saveCorner(corner) {
+    widget.dataset.corner = corner;
+    try { show(await request('SET_WIDGET_CORNER', { corner })); }
+    catch { void refresh(); }
+  }
+  function enableDragging() {
+    const handle = widget.querySelector('#move-widget');
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      const rect = widget.getBoundingClientRect();
+      drag = { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+      handle.setPointerCapture(event.pointerId); widget.classList.add('dragging');
+    };
+    handle.onpointermove = event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const left = Math.max(0, Math.min(innerWidth - widget.offsetWidth, event.clientX - drag.x));
+      const top = Math.max(0, Math.min(innerHeight - widget.offsetHeight, event.clientY - drag.y));
+      Object.assign(widget.style, { left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto' });
+    };
+    const finish = event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const rect = widget.getBoundingClientRect();
+      const corner = `${rect.top + rect.height / 2 < innerHeight / 2 ? 'top' : 'bottom'}-${rect.left + rect.width / 2 < innerWidth / 2 ? 'left' : 'right'}`;
+      drag = null; widget.classList.remove('dragging');
+      for (const key of ['left', 'top', 'right', 'bottom']) widget.style[key] = '';
+      void saveCorner(corner);
+    };
+    handle.onpointerup = finish; handle.onpointercancel = finish; handle.onlostpointercapture = finish;
+  }
+  function moveWithKeyboard(event) {
+    if (!event.composedPath().includes(widget?.querySelector('#move-widget'))) return;
+    const [vertical, horizontal] = widget.dataset.corner.split('-');
+    const corners = { ArrowUp: `top-${horizontal}`, ArrowDown: `bottom-${horizontal}`, ArrowLeft: `${vertical}-left`, ArrowRight: `${vertical}-right` };
+    if (corners[event.key]) { event.preventDefault(); void saveCorner(corners[event.key]); }
   }
   function pauseMedia() {
     document.querySelectorAll('video,audio').forEach(media => media.pause());
@@ -52,21 +111,22 @@
   function show(data) {
     current = data;
     if (data.mode === 'unmanaged') {
-      host?.remove(); signature = ''; clearInterval(timer); timer = null; return;
+      if (dialog?.open) dialog.close();
+      drag = null; host?.remove(); signature = ''; clearInterval(timer); timer = null; return;
     }
     mount();
+    host.dataset.theme = data.theme || 'system';
+    if (data.mode !== 'open') warning.hidden = true;
     const nextSignature = [data.mode, data.site?.domain, data.phrase, data.maxMinutes].join('|');
     if (data.mode === 'open') {
       if (dialog.open) dialog.close(); widget.hidden = false;
       if (signature !== nextSignature) {
-        widget.innerHTML = `<div class="widget-head"><span>Session remaining</span><button id="add-time" aria-label="Add time to this session">+</button></div><div class="widget-time"><b id="session"></b></div><div class="widget-usage"><span id="used"></span> / <span id="limit"></span> today</div><div class="track"><div class="fill"></div></div><div class="widget-bottom"><span id="adds-left"></span><button id="end">End session</button></div><div class="widget-message" role="status" hidden></div>`;
+        widget.innerHTML = `<div class="widget-head"><button id="move-widget" type="button" aria-label="Move widget: drag or use arrow keys" title="Drag to a corner, or focus and use arrow keys">⠿ Session remaining</button><button id="add-time" aria-label="Add time to this session">+</button></div><div class="widget-time"><b id="session"></b></div><div class="widget-usage"><span id="used"></span> / <span id="limit"></span> today</div><div class="track"><div class="fill"></div></div><div class="widget-bottom"><span id="adds-left"></span><button id="end">End session</button></div><div class="widget-message" role="status" hidden></div>`;
         widget.querySelector('#end').onclick = async () => { try { show(await request('END_SESSION')); } catch { void refresh(); } };
-        widget.querySelector('#add-time').onclick = async () => {
-          const button = widget.querySelector('#add-time'); button.disabled = true;
-          try { show(await request('ADD_TIME')); widget.querySelector('.widget-message').hidden = true; }
-          catch (error) { const note = widget.querySelector('.widget-message'); note.textContent = error.message; note.hidden = false; void refresh(); }
-        };
+        widget.querySelector('#add-time').onclick = extendSession;
+        enableDragging();
       }
+      if (!drag) widget.dataset.corner = data.widgetCorner || 'top-right';
       widget.querySelector('#used').textContent = time(data.usedMs);
       widget.querySelector('#limit').textContent = `${data.site.dailyLimitMinutes} min`;
       widget.querySelector('#session').textContent = time(Math.min(data.expiresAt - data.now, data.remainingMs));
@@ -76,6 +136,14 @@
       add.title = data.addsRemaining === 0 ? 'No extra-time uses left today' : !data.canAddTime ? 'Daily allowance already included' : `Add up to ${data.addMinutes} minutes · ${data.addsRemaining} uses left today`;
       add.setAttribute('aria-label', add.title);
       widget.querySelector('.fill').style.width = `${data.usedMs / (data.site.dailyLimitMinutes * 60000) * 100}%`;
+      const left = Math.min(data.expiresAt - data.now, data.remainingMs);
+      warning.hidden = !(data.warnBeforeEnd && !document.hidden && left > 0 && left <= 10000);
+      if (!warning.hidden) {
+        warning.querySelector('#warning-seconds').textContent = `${Math.ceil(left / 1000)} seconds left${data.canAddTime ? '' : ' · No extra time available'}`;
+        const extend = warning.querySelector('button');
+        extend.hidden = !data.canAddTime; extend.disabled = !data.canAddTime;
+        extend.textContent = `+ Add up to ${data.addMinutes} min`;
+      }
     } else {
       widget.hidden = true;
       pauseMedia();
@@ -109,19 +177,19 @@
     signature = nextSignature;
   }
   async function refresh() {
-    if (busy) return;
+    if (busy) { refreshPending = true; return; }
     busy = true;
     try {
       show(await request('STATUS'));
       if (current.mode !== 'unmanaged' && !timer) timer = setInterval(refresh, 1000);
     } catch (error) {
       if (current && current.mode !== 'unmanaged') {
-        mount(); widget.hidden = true; pauseMedia();
+        mount(); widget.hidden = true; warning.hidden = true; pauseMedia();
         dialog.innerHTML = '<div class="shell"><main class="panel"><div class="eyebrow">A quick reset</div><h1>Let’s reconnect.</h1><p>Reload this page to reconnect to Intentional.</p><button class="primary">Reload page</button></main></div>';
         dialog.querySelector('button').onclick = () => location.reload();
         if (!dialog.open) dialog.showModal(); signature = '';
       }
-    } finally { busy = false; }
+    } finally { busy = false; if (refreshPending) { refreshPending = false; void refresh(); } }
   }
   chrome.runtime.onMessage.addListener(message => { if (message.type === 'REFRESH') void refresh(); });
   document.addEventListener('visibilitychange', refresh);

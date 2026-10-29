@@ -1,4 +1,4 @@
-const requestTypes = new Set(['DASHBOARD', 'SAVE_SETTINGS', 'OPEN_SETTINGS', 'CLOSE_TAB', 'STATUS', 'UNLOCK', 'ADD_TIME', 'END_SESSION']);
+const requestTypes = new Set(['DASHBOARD', 'SAVE_SETTINGS', 'REMOVE_SITE', 'OPEN_SETTINGS', 'CLOSE_TAB', 'STATUS', 'UNLOCK', 'ADD_TIME', 'END_SESSION', 'SET_WIDGET_CORNER']);
 
 export function isOwnRequest(message, sender, extensionId) {
   return sender?.id === extensionId && message !== null && typeof message === 'object' && requestTypes.has(message.type);

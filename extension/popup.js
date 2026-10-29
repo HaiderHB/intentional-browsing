@@ -1,4 +1,5 @@
 import { duration } from './core.js';
+import './theme.js';
 document.querySelector('#settings').onclick = () => chrome.runtime.openOptionsPage();
 try {
   const response = await chrome.runtime.sendMessage({ type: 'DASHBOARD' });

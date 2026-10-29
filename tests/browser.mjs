@@ -68,12 +68,34 @@ try {
   await page.locator('button[type=submit]').click();
   await expect(page.locator('.widget')).toBeVisible(); await expect(page.locator('dialog')).not.toBeVisible();
   await expect(page.locator('.widget')).toHaveCSS('opacity', '0.5');
+  await page.locator('.widget').hover();
+  await expect(page.locator('.widget')).toHaveCSS('opacity', '1');
+  await page.mouse.move(600, 500);
+  await expect(page.locator('.widget')).toHaveCSS('opacity', '0.5');
   await expect(page.locator('.widget-time #session')).toContainText(':');
   await expect(page.locator('.widget-usage')).toContainText('/ 1 min today');
   await page.locator('#underlying').focus(); await page.keyboard.press('Space');
   assert.ok(await page.evaluate(() => window.playerSpacePresses > 0), 'Normal player keyboard shortcuts still work');
   await expect.poll(async () => (await request('DASHBOARD')).sites[0].usedMs, { timeout: 10000 }).toBeGreaterThan(1000);
   await page.screenshot({ path: resolve(screenshots, 'widget.png') });
+  // Pointer dragging snaps to all four corners and persists across reloads.
+  for (const [corner, x, y] of [['bottom-left', 100, 800], ['bottom-right', 1200, 800], ['top-left', 100, 100], ['top-right', 1200, 100]]) {
+    const handle = await page.locator('#move-widget').boundingBox();
+    await page.mouse.move(handle.x + 30, handle.y + 10); await page.mouse.down();
+    await page.mouse.move(x, y, { steps: 6 }); await page.mouse.up();
+    await expect(page.locator('.widget')).toHaveAttribute('data-corner', corner);
+    await expect.poll(async () => (await request('DASHBOARD')).settings.widgetCorner).toBe(corner);
+  }
+  await page.locator('#move-widget').focus(); await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('.widget')).toHaveAttribute('data-corner', 'top-left');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('.widget')).toHaveAttribute('data-corner', 'bottom-left');
+  await page.reload(); await expect(page.locator('.widget')).toHaveAttribute('data-corner', 'bottom-left');
+  await page.setViewportSize({ width: 320, height: 480 });
+  const rect = await page.locator('.widget').boundingBox();
+  assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= 320 && rect.y + rect.height <= 480);
+  await page.setViewportSize({ width: 1360, height: 960 });
+  report('hover opacity, all four drag corners, keyboard positioning, persistence, and narrow bounds');
   const first = (await request('DASHBOARD')).sites[0];
   await page.reload(); await expect(page.locator('.widget')).toBeVisible();
   assert.equal((await request('DASHBOARD')).sites[0].expiresAt, first.expiresAt);
@@ -124,6 +146,13 @@ try {
   await music.reload(); await expect(music.locator('dialog h1')).toContainText('You kept your limit');
   await music.screenshot({ path: resolve(screenshots, 'blocked.png') });
   report('hard daily cap has no slider and survives reload');
+  const blockedSettings = (await request('DASHBOARD')).settings;
+  await ui.getByRole('button', { name: 'Remove youtube.com', exact: true }).click();
+  await expect(music.locator('intentional-focus')).toHaveCount(0);
+  await expect(page.locator('intentional-focus')).toHaveCount(0);
+  await request('SAVE_SETTINGS', { settings: blockedSettings });
+  await expect(music.locator('dialog h1')).toContainText('You kept your limit');
+  report('removing a daily-blocked website immediately removes the block; re-adding preserves daily usage');
 
   const dashboard = await request('DASHBOARD');
   await worker.evaluate(resetAt => { globalThis.testOffset = resetAt - globalThis.testRealNow() + 1; }, dashboard.resetAt);
@@ -168,6 +197,69 @@ try {
   report('configurable + time changes only countdown, shares quota across tabs, survives reload, and works by keyboard');
   await page.bringToFront();
   await page.screenshot({ path: resolve(screenshots, 'widget.png') });
+
+  await ui.reload();
+  await expect(ui.locator('#warn-before-end')).not.toBeChecked();
+  await ui.emulateMedia({ colorScheme: 'dark' });
+  await expect(ui.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await ui.locator('#theme').selectOption('light');
+  await expect(ui.locator('html')).toHaveCSS('color-scheme', 'light');
+  await ui.locator('#theme').selectOption('dark');
+  await ui.locator('#warn-before-end').check(); await ui.locator('#max-adds').fill('3');
+  await ui.locator('#save').click(); await expect(ui.locator('#status')).toContainText('Saved');
+  await ui.screenshot({ path: resolve(screenshots, 'settings-dark.png'), fullPage: true });
+  await expect(page.locator('intentional-focus')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('dialog')).toHaveCSS('background-color', 'rgb(23, 28, 25)');
+  await popup.reload(); await expect(popup.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await page.bringToFront(); await page.screenshot({ path: resolve(screenshots, 'unlock-dark.png') });
+  await page.locator('#minutes').fill('1');
+  await page.locator('#phrase').pressSequentially('unlock now'); await page.locator('button[type=submit]').click();
+  await expect(page.locator('.widget')).toHaveCSS('background-color', 'rgb(34, 41, 35)');
+  await expect(page.locator('.warning')).toBeHidden();
+  const expires = (await request('DASHBOARD')).sites[0].expiresAt;
+  await worker.evaluate(expiresAt => { globalThis.testOffset = expiresAt - globalThis.testRealNow() - 12000; Date.now = () => globalThis.testRealNow() + globalThis.testOffset; }, expires);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.locator('.warning')).toBeHidden();
+  await worker.evaluate(() => { globalThis.testOffset += 4000; });
+  await expect(page.locator('.warning')).toBeVisible();
+  await expect(page.locator('#warning-add')).toBeEnabled();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.locator('.warning')).toHaveCSS('animation-name', 'none');
+  await page.screenshot({ path: resolve(screenshots, 'warning-dark.png') });
+  const beforeWarningAdd = (await request('DASHBOARD')).sites[0];
+  await page.locator('#warning-add').click(); await expect(page.locator('.warning')).toBeHidden();
+  const extended = (await request('DASHBOARD')).sites[0];
+  assert.equal(extended.expiresAt - beforeWarningAdd.expiresAt, 120000);
+  assert.equal(extended.site.dailyLimitMinutes, 60);
+  await worker.evaluate(expiresAt => { globalThis.testOffset = expiresAt - globalThis.testRealNow() - 8000; }, extended.expiresAt);
+  await expect(page.locator('.warning')).toBeVisible(); await expect(page.locator('#warning-add')).toBeHidden();
+  await worker.evaluate(() => { globalThis.testOffset += 10000; });
+  await expect(page.locator('dialog')).toBeVisible(); await expect(page.locator('.warning')).toBeHidden();
+  report('system/light/dark themes and optional ten-second warning, extension, quota exhaustion, reduced motion and expiry');
+
+  // Removal must take effect on open gated and subdomain tabs without Save or reload.
+  await ui.getByRole('button', { name: 'Remove youtube.com', exact: true }).click();
+  await expect(ui.locator('#status')).toContainText('Restrictions are off now');
+  await expect(page.locator('intentional-focus')).toHaveCount(0);
+  await expect(music.locator('intentional-focus')).toHaveCount(0);
+  await page.locator('#underlying').click(); // The modal must no longer make the page inert.
+  assert.equal((await request('DASHBOARD')).sites.length, 0);
+  const pauses = await page.evaluate(() => {
+    const video = document.createElement('video'); let pauses = 0;
+    video.pause = () => { pauses++; }; document.body.append(video);
+    video.dispatchEvent(new Event('play')); video.remove(); return pauses;
+  });
+  assert.equal(pauses, 0, 'Removed websites no longer have media paused');
+  // Re-add without reloading the website, then remove while its timer is visible.
+  await ui.locator('#new-domain').fill('youtube.com'); await ui.locator('#new-daily').fill('60');
+  await ui.locator('#add').click(); await ui.locator('#save').click();
+  await expect(page.locator('dialog')).toBeVisible();
+  await page.bringToFront(); await page.locator('#phrase').pressSequentially('unlock now');
+  await page.locator('button[type=submit]').click(); await expect(page.locator('.widget')).toBeVisible();
+  await ui.getByRole('button', { name: 'Remove youtube.com', exact: true }).click();
+  await expect(page.locator('intentional-focus')).toHaveCount(0);
+  await page.reload(); await expect(page.locator('intentional-focus')).toHaveCount(0);
+  report('immediate removal clears gates, timers, media interception and subdomain tabs; re-adding works without reload');
   assert.deepEqual(errors, []);
 } finally { await context.close(); }
 await import('./persistence.mjs');

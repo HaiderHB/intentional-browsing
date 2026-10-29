@@ -1,6 +1,7 @@
 export const MINUTE = 60_000;
 export const MAX_GAP = 5_000;
-export const defaults = () => ({ phrase: 'unlock now', resetTime: '03:00', addMinutes: 5, maxAddsPerDay: 3, sites: [] });
+export const WIDGET_CORNERS = ['top-right', 'top-left', 'bottom-right', 'bottom-left'];
+export const defaults = () => ({ phrase: 'unlock now', resetTime: '03:00', addMinutes: 5, maxAddsPerDay: 3, theme: 'system', warnBeforeEnd: false, widgetCorner: 'top-right', sites: [] });
 
 export function normalizeDomain(value) {
   const text = String(value ?? '').trim();
@@ -29,6 +30,10 @@ export function validateSettings(input) {
     throw new Error('Your unlock phrase must contain 1–160 characters.');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.resetTime)) throw new Error('Choose a valid daily reset time.');
   const addMinutes = input.addMinutes ?? 5, maxAddsPerDay = input.maxAddsPerDay ?? 3;
+  const theme = input.theme ?? 'system', warnBeforeEnd = input.warnBeforeEnd ?? false, widgetCorner = input.widgetCorner ?? 'top-right';
+  if (!['system', 'light', 'dark'].includes(theme)) throw new Error('Choose a valid appearance.');
+  if (typeof warnBeforeEnd !== 'boolean') throw new Error('Choose whether to show the ten-second warning.');
+  if (!WIDGET_CORNERS.includes(widgetCorner)) throw new Error('Choose a valid widget corner.');
   if (!Number.isInteger(addMinutes) || addMinutes < 1 || addMinutes > 1440)
     throw new Error('Extra time must be a whole number of minutes between 1 and 1,440.');
   if (!Number.isInteger(maxAddsPerDay) || maxAddsPerDay < 0 || maxAddsPerDay > 100)
@@ -47,7 +52,7 @@ export function validateSettings(input) {
     if (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
       throw new Error(`${a} and ${b} overlap. One entry already covers its subdomains.`);
   }
-  return { phrase: input.phrase.trim(), resetTime: input.resetTime, addMinutes, maxAddsPerDay, sites };
+  return { phrase: input.phrase.trim(), resetTime: input.resetTime, addMinutes, maxAddsPerDay, theme, warnBeforeEnd, widgetCorner, sites };
 }
 
 // Calendar arithmetic, rather than adding 24h, preserves the local reset across DST.
@@ -108,7 +113,8 @@ export function siteStatus(state, site, now) {
   return { site, usedMs, remainingMs, expiresAt, now,
     resetAt, addsRemaining, addMinutes: state.settings.addMinutes ?? 5,
     canAddTime: expiresAt > now && remainingMs > 0 && addsRemaining > 0 && addableMs > 0,
-    phrase: state.settings.phrase,
+    phrase: state.settings.phrase, theme: state.settings.theme ?? 'system',
+    warnBeforeEnd: state.settings.warnBeforeEnd ?? false, widgetCorner: state.settings.widgetCorner ?? 'top-right',
     maxMinutes: Math.min(site.maxSessionMinutes, Math.ceil(remainingMs / MINUTE)),
     mode: remainingMs === 0 ? 'blocked' : expiresAt > now ? 'open' : 'gate' };
 }

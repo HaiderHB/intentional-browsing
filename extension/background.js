@@ -1,4 +1,4 @@
-import { defaults, validateSettings, freshLedger, advance, findSite, siteStatus, unlock, addTime, dayWindow } from './core.js';
+import { defaults, validateSettings, freshLedger, advance, findSite, siteStatus, unlock, addTime, dayWindow, WIDGET_CORNERS } from './core.js';
 import { createSerialQueue, createRequestListener, isExtensionUi } from './messaging.js';
 
 let state;
@@ -42,16 +42,28 @@ async function handle(message, sender) {
     advance(state, now);
     result = { settings: next };
     await schedule();
+  } else if (message.type === 'REMOVE_SITE' && ui) {
+    state.settings.sites = state.settings.sites.filter(site => site.domain !== message.domain);
+    advance(state, now); // Drops only this website's session and active tracker.
+    result = { settings: state.settings };
+    await schedule();
   } else if (message.type === 'OPEN_SETTINGS') {
     await chrome.runtime.openOptionsPage(); result = {};
   } else if (message.type === 'CLOSE_TAB' && sender.tab) {
     await chrome.tabs.remove(sender.tab.id); result = {};
-  } else if (sender.tab && sender.frameId === 0 && ['STATUS', 'UNLOCK', 'ADD_TIME', 'END_SESSION'].includes(message.type)) {
+  } else if (!ui && sender.tab && sender.frameId === 0 && /^https?:/.test(sender.url || '') && ['STATUS', 'UNLOCK', 'ADD_TIME', 'END_SESSION', 'SET_WIDGET_CORNER'].includes(message.type)) {
     const tab = await chrome.tabs.get(sender.tab.id);
     const site = findSite(state.settings, sender.url);
     // Reject a stale document after navigation.
     if (site?.domain !== findSite(state.settings, tab.url)?.domain) throw new Error('The page changed. Reload to continue.');
-    if (message.type === 'UNLOCK') {
+    if (!site) {
+      // A removed website is unrestricted, including requests already in flight.
+      result = { mode: 'unmanaged' };
+    } else if (message.type === 'SET_WIDGET_CORNER') {
+      if (!WIDGET_CORNERS.includes(message.corner)) throw new Error('Choose a valid widget corner.');
+      state.settings.widgetCorner = message.corner;
+      result = siteStatus(state, site, now);
+    } else if (message.type === 'UNLOCK') {
       result = unlock(state, site, message.minutes, message.phrase, now);
       await schedule();
     } else if (message.type === 'ADD_TIME') {
@@ -70,7 +82,7 @@ async function handle(message, sender) {
     } else if (state.runtime.tracker?.tabId === tab.id) state.runtime.tracker = null;
   } else throw new Error('This request is not allowed from this page. Reload Intentional and the website, then try again.');
   await save();
-  if (['SAVE_SETTINGS', 'END_SESSION', 'UNLOCK', 'ADD_TIME'].includes(message.type)) void broadcast();
+  if (['SAVE_SETTINGS', 'REMOVE_SITE', 'END_SESSION', 'UNLOCK', 'ADD_TIME', 'SET_WIDGET_CORNER'].includes(message.type)) void broadcast();
   return result;
 }
 chrome.runtime.onMessage.addListener(createRequestListener({ extensionId: chrome.runtime.id, enqueue: serial, handle }));

@@ -153,3 +153,28 @@ test('extra-time uses reset at the configured daily boundary', () => {
   advance(state, reset);
   assert.equal(siteStatus(state, site, reset).addsRemaining, 3);
 });
+
+test('appearance, warning and corner settings migrate and reject invalid values', () => {
+  const old = { phrase: 'unlock now', resetTime: '03:00', sites: [] };
+  const settings = validateSettings(old);
+  assert.equal(settings.theme, 'system');
+  assert.equal(settings.warnBeforeEnd, false);
+  assert.equal(settings.widgetCorner, 'top-right');
+  for (const invalid of [{ theme: 'invalid' }, { warnBeforeEnd: 'true' }, { widgetCorner: 'middle' }])
+    assert.throws(() => validateSettings({ ...old, ...invalid }));
+});
+
+test('removing a website clears its session and tracker while retaining its daily history', () => {
+  const state = fixture(), site = state.settings.sites[0];
+  state.settings.sites.push({ domain: 'example.com', maxSessionMinutes: 5, dailyLimitMinutes: 30 });
+  unlock(state, site, 5, 'unlock now', base);
+  unlock(state, state.settings.sites[1], 5, 'unlock now', base);
+  state.ledger.totals[site.domain] = 1000;
+  state.runtime.tracker = { domain: site.domain, tabId: 1, at: base };
+  state.settings.sites.shift(); advance(state, base);
+  assert.equal(state.runtime.sessions[site.domain], undefined);
+  assert.equal(state.runtime.tracker, null);
+  assert.ok(state.runtime.sessions['example.com']);
+  assert.equal(state.ledger.totals[site.domain], 1000);
+  assert.equal(siteStatus(state, findSite(state.settings, 'https://music.youtube.com'), base).mode, 'unmanaged');
+});

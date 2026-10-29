@@ -11,8 +11,11 @@ A local-only Chrome extension inspired by the idea behind one sec. Choose how lo
 - **A pause on selected websites.** Add a domain such as `youtube.com`; its subdomains are included.
 - **Choose your session.** A minute slider asks how long you plan to stay. Each website has a configurable slider maximum.
 - **Type to unlock.** Enter your exact preset phrase, such as `unlock now`. Pasting and dropping text are disabled.
-- **See time remaining first.** A widget at 50% opacity in the top-right shows the session countdown in large text, with today's usage versus the daily allowance underneath. It includes an **End session** button.
+- **See time remaining first.** A widget at 50% opacity shows the session countdown in large text, with today's usage versus the daily allowance underneath. Hover or focus it for full opacity. Drag its heading to any corner; the position is remembered across websites and restarts. Arrow keys on the heading and a settings dropdown also move it. It includes an **End session** button.
 - **Add a little time.** Click **+** to extend the current countdown. Configure minutes per click and a daily number of uses per website in settings (defaults: 5 minutes, 3 uses). Tabs and sessions share this quota. Extra time never increases the daily allowance, never changes recorded usage, and cannot run beyond the next reset. Set uses to 0 to disable.
+- **Dark mode.** Choose Light, Dark, or Follow system in **Appearance & reminders**. Applies to settings, popup, pause screen, and widget.
+- **A warning before time runs out.** Enable **Warn me with 10 seconds left** for a brief pulsing banner with a button to add time. The warning stops after extending or ending the session, respects reduced motion, and never increases the daily allowance. Off by default.
+- **Remove websites immediately.** Clicking Remove lifts restrictions on all open tabs and subdomains without Save or a page reload. Current-day usage is retained if you add the website again. Other edits still need saving.
 - **Type without player shortcuts.** Keystrokes inside the pause screen are isolated from the website, so YouTube's spacebar shortcut cannot steal spaces from the unlock phrase.
 - **Stop at your daily limit.** Once a website's allowance is used, the screen says it is blocked. There is no slider or unlock button until the next day starts.
 - **Start your day when you want.** One shared reset time uses your computer's local timezone. The default is **3:00 AM**, including calendar-day handling across daylight-saving changes.
@@ -21,7 +24,7 @@ A local-only Chrome extension inspired by the idea behind one sec. Choose how lo
 
 No build is needed to run the extension.
 
-1. Download **intentional-1.1.1.zip** from [Releases](https://github.com/HaiderHB/intentional-browsing/releases/latest) and extract it into a permanent folder.
+1. Download **intentional-1.2.0.zip** from [Releases](https://github.com/HaiderHB/intentional-browsing/releases/latest) and extract it into a permanent folder.
 2. Open `chrome://extensions` in Chrome.
 3. Turn on **Developer mode** in the top-right.
 4. Click **Load unpacked** and select the extracted folder containing `manifest.json`.
@@ -30,9 +33,11 @@ No build is needed to run the extension.
 
 If you clone this repository instead, load the **`extension/`** subfolder. Chrome 120 or later is required. This is an unpacked extension, not a Chrome Web Store listing.
 
-To update an existing unpacked installation, replace the extension files in the same folder, click the extension's **Reload** button at `chrome://extensions`, and reload already-open website tabs. Existing settings and current-day usage are preserved. Extra-time settings are added automatically.
+To update an existing unpacked installation, replace the extension files in the same folder, click the extension's **Reload** button at `chrome://extensions`, and reload already-open website tabs. Existing settings and current-day usage are preserved. New settings are added automatically: appearance follows your system, and the optional ten-second warning starts off.
 
 ![Settings](docs/images/settings.png)
+
+![Dark mode and the session warning](docs/images/warning-dark.png)
 
 ## How time works
 
@@ -78,11 +83,11 @@ npm run test:browser
 npm run package
 ```
 
-The browser suite loads the actual extension in an isolated Chromium profile. It covers settings, the gate, incorrect phrases, the slider cap, Escape handling, a narrow viewport, unlocking, the widget, reloads, shared subdomains, foreground accounting, multiple tabs, ending sessions, session expiry, the hard daily cap, and the daily reset. It also verifies keyboard isolation against simulated player handlers at both window/document capture and bubble phases, the widget's opacity and layout, configurable extra-time grants, shared quotas, and persistence across a real browser restart. Website fixtures avoid relying on a live service. A test-only clock shift speeds up expiry checks; no test hooks ship in the extension. Screenshots go to `test-results/`.
+The browser suite loads the actual extension in an isolated Chromium profile. It covers settings, the gate, incorrect phrases, the slider cap, Escape handling, a narrow viewport, unlocking, the widget, reloads, shared subdomains, foreground accounting, multiple tabs, ending sessions, session expiry, the hard daily cap, and the daily reset. It also verifies keyboard isolation against simulated player handlers at both window/document capture and bubble phases, the widget's opacity and layout, configurable extra-time grants, shared quotas, and persistence across a real browser restart. It also covers dark/system/light themes, corner dragging and keyboard positioning, the optional warning and its extend button, and immediate removal of gated, blocked, and unlocked websites across tabs. Website fixtures avoid relying on a live service. A test-only clock shift speeds up expiry checks; no test hooks ship in the extension. Screenshots go to `test-results/`.
 
 The unit suite covers domain matching and validation, overlaps, reset boundaries, daylight-saving days, concurrent unlocks, accounting, sleep gaps, partial-minute budgets, and persistence through serialization. `CHROMIUM_PATH` can select an existing compatible Chromium binary for local browser tests.
 
-`npm run package` creates `dist/intentional-1.1.1.zip` containing just the ready-to-load extension. `node scripts/icons.mjs` regenerates the original pause icons.
+`npm run package` creates `dist/intentional-1.2.0.zip` containing just the ready-to-load extension. `node scripts/icons.mjs` regenerates the original pause icons.
 
 An optional GitHub Actions workflow is included at [`docs/ci.example.yml`](docs/ci.example.yml). To enable it, add it as `.github/workflows/ci.yml` with an account or token allowed to manage workflows. It is a template, not an active repository check.
 
@@ -97,6 +102,7 @@ extension/
   content.js        Isolated pause screen and usage widget
   options.*         Website and ritual settings
   popup.*           Today's usage summary
+  theme.js          Shared appearance preference and live updates
   ui.css            Shared extension-page styles
   icons/            Original pause icons
 tests/              Unit and real-extension browser tests

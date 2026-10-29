@@ -1,4 +1,5 @@
 import { normalizeDomain, validateSettings, duration } from './core.js';
+import { applyTheme } from './theme.js';
 let draft, snapshot;
 const $ = selector => document.querySelector(selector);
 async function send(type, extra = {}) { const result = await chrome.runtime.sendMessage({ type, ...extra }); if (!result.ok) throw new Error(result.error); return result.data; }
@@ -19,7 +20,15 @@ function renderSites() {
     session.value = site.maxSessionMinutes; daily.value = site.dailyLimitMinutes;
     session.oninput = () => { site.maxSessionMinutes = Number(session.value); notice('Unsaved changes'); };
     daily.oninput = () => { site.dailyLimitMinutes = Number(daily.value); notice('Unsaved changes'); };
-    row.querySelector('button').onclick = () => { draft.sites.splice(index, 1); renderSites(); notice('Removed from this draft. Save to apply.'); };
+    row.querySelector('button').onclick = async event => {
+      event.currentTarget.disabled = true;
+      try {
+        await send('REMOVE_SITE', { domain: site.domain });
+        draft.sites = draft.sites.filter(entry => entry.domain !== site.domain);
+        snapshot.sites = snapshot.sites.filter(entry => entry.site.domain !== site.domain);
+        renderSites(); notice(`${site.domain} removed. Restrictions are off now. Other edits still need saving.`);
+      } catch (error) { notice(error.message, true); renderSites(); }
+    };
     $('#sites').append(row);
   });
 }
@@ -37,6 +46,9 @@ $('#unlock-phrase').oninput = () => { draft.phrase = $('#unlock-phrase').value; 
 $('#reset-time').oninput = () => { draft.resetTime = $('#reset-time').value; notice('Unsaved changes'); };
 $('#add-minutes').oninput = () => { draft.addMinutes = Number($('#add-minutes').value); notice('Unsaved changes'); };
 $('#max-adds').oninput = () => { draft.maxAddsPerDay = Number($('#max-adds').value); notice('Unsaved changes'); };
+$('#theme').onchange = () => { draft.theme = $('#theme').value; applyTheme(draft.theme); notice('Unsaved changes'); };
+$('#warn-before-end').onchange = () => { draft.warnBeforeEnd = $('#warn-before-end').checked; notice('Unsaved changes'); };
+$('#widget-corner').onchange = () => { draft.widgetCorner = $('#widget-corner').value; notice('Unsaved changes'); };
 $('#settings-form').onsubmit = async event => {
   event.preventDefault();
   try {
@@ -48,5 +60,5 @@ $('#settings-form').onsubmit = async event => {
   } catch (error) { notice(error.message, true); }
   finally { $('#save').disabled = false; }
 };
-try { snapshot = await send('DASHBOARD'); draft = structuredClone(snapshot.settings); $('#unlock-phrase').value = draft.phrase; $('#reset-time').value = draft.resetTime; $('#add-minutes').value = draft.addMinutes; $('#max-adds').value = draft.maxAddsPerDay; renderSites(); }
+try { snapshot = await send('DASHBOARD'); draft = structuredClone(snapshot.settings); $('#unlock-phrase').value = draft.phrase; $('#reset-time').value = draft.resetTime; $('#add-minutes').value = draft.addMinutes; $('#max-adds').value = draft.maxAddsPerDay; $('#theme').value = draft.theme; $('#warn-before-end').checked = draft.warnBeforeEnd; $('#widget-corner').value = draft.widgetCorner; renderSites(); }
 catch (error) { notice(error.message, true); $('#save').disabled = true; }
